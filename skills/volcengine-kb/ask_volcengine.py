@@ -1,4 +1,5 @@
 
+import argparse
 import os
 import sys
 import json
@@ -36,6 +37,7 @@ def call_deepseek(messages, model=None, temperature=0.3):
         "temperature": temperature,
         "stream": False
     }
+    # print("[STATUS] Thinking...", file=sys.stderr)
     try:
         # Increased timeout for reasoning model
         response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
@@ -397,19 +399,24 @@ if __name__ == "__main__":
     parser.add_argument("--voice", action="store_true", help="Generate voice output")
     args = parser.parse_args()
     
-    response = chat_with_model(args.query)
-    if response:
-        print(response)
-        if args.voice:
-            # Generate a unique filename based on hash or timestamp to avoid collisions
-            import hashlib
-            import time
-            filename = f"reply_{int(time.time())}_{hashlib.md5(response.encode()).hexdigest()[:8]}.mp3"
-            outfile = os.path.join("/tmp", filename)
-            
-            # Limit text for TTS to first 500 chars to be fast
-            tts_text = response[:500]
-            if generate_voice(tts_text, outfile):
-                print(f"\n[AUDIO_FILE: {outfile}]")
-    else:
-        print("抱歉，我无法回答这个问题。")
+    try:
+        response = chat_with_model(args.query)
+        if response:
+            print(response)
+            if args.voice:
+                # Generate a unique filename based on hash or timestamp to avoid collisions
+                import hashlib
+                import time
+                filename = f"reply_{int(time.time())}_{hashlib.md5(response.encode()).hexdigest()[:8]}.mp3"
+                outfile = os.path.join("/tmp", filename)
+                
+                # Limit text for TTS to first 500 chars to be fast
+                tts_text = response[:500]
+                if generate_voice(tts_text, outfile):
+                    print(f"\n[AUDIO_FILE: {outfile}]")
+                else:
+                    print("[WARN] Voice generation failed", file=sys.stderr)
+        else:
+            print("抱歉，我无法回答这个问题。")
+    except Exception as e:
+        print(f"[ERROR] LLM Call failed: {e}", file=sys.stderr)
