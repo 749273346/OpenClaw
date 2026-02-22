@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HuiDianBao Architecture Flowchart</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.8.0/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .mermaid { width: 100%; max-width: 1200px; }
+    </style>
+</head>
+<body>
+    <h1>惠电宝 (HuiDianBao) 技术架构与交互流程</h1>
+    <div class="mermaid">
+        flowchart TD
+            %% Styles
+            classDef userNode fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+            classDef gatewayNode fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
+            classDef logicNode fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+            classDef kbNode fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+            classDef llmNode fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+
+            %% Nodes
+            User(["用户 (企业微信)"]):::userNode
+            
+            subgraph GatewayLayer ["接入层 (Node.js)"]
+                Monitor["Gateway: WeCom Monitor"]:::gatewayNode
+                Thinking["状态: 惠电宝正在思考..."]:::gatewayNode
+                PythonScript["ask_volcengine.py"]:::logicNode
+            end
+            
+            subgraph CoreLogic ["核心逻辑层 (Python)"]
+                Intent{"意图识别"}:::logicNode
+                ChatPrompt["加载闲聊 Prompt"]:::logicNode
+                FastLLM1["调用 DeepSeek-Chat"]:::llmNode
+                Complexity{"复杂度判断"}:::logicNode
+                FastLLM2["DeepSeek-Chat"]:::llmNode
+                ReasonLLM["DeepSeek-Reasoner"]:::llmNode
+                ExtractKey["关键词提取"]:::logicNode
+                SearchKB["本地搜索 (grep)"]:::kbNode
+                
+                subgraph KnowledgeBase ["本地知识库"]
+                    Docs["Markdown规程文件"]:::kbNode
+                    GetContext["截取上下文"]:::logicNode
+                end
+                
+                Assemble["组装 RAG Prompt"]:::logicNode
+                FinalLLM["生成最终回答"]:::llmNode
+            end
+
+            %% Connections
+            User -->|"1. 发送消息"| Monitor
+            Monitor -->|"2. 立即反馈"| Thinking
+            Monitor -->|"3. 调用脚本"| PythonScript
+            PythonScript --> Intent
+            
+            Intent -- "闲聊 (Chat)" --> ChatPrompt
+            ChatPrompt --> FastLLM1
+            
+            Intent -- "工作 (Work)" --> Complexity
+            Complexity -- "简单" --> FastLLM2
+            Complexity -- "复杂" --> ReasonLLM
+            
+            FastLLM2 --> ExtractKey
+            ReasonLLM --> ExtractKey
+            ExtractKey --> SearchKB
+            SearchKB -->|"扫描"| Docs
+            Docs -->|"返回行号"| GetContext
+            GetContext --> Assemble
+            Assemble --> FinalLLM
+            
+            FinalLLM -->|"4. 返回结果"| Monitor
+            FastLLM1 -->|"4. 返回结果"| Monitor
+            Monitor -->|"5. 推送消息"| User
+    </div>
+</body>
+</html>

@@ -109,7 +109,7 @@ def search_kb(keywords):
         print(f"Grep Error: {e}", file=sys.stderr)
         return []
 
-def get_context(matches, max_chunks=12):
+def get_context(matches, max_chunks=25):
     """
     Step 3: Retrieve context around the matches.
     Reads the file and extracts the section (Header to Header) containing the match.
@@ -181,11 +181,37 @@ def get_context(matches, max_chunks=12):
                 content = "".join(lines[start_idx:end_idx]).strip()
                 filename = os.path.basename(file_path)
                 
+                # Filter out TOC-like chunks (short and containing lots of dashes/dots followed by digits)
+                # e.g. "## 第五章  电力设备鉴定-----------63"
+                if len(content) < 200 and re.search(r'[-.]{3,}\s*\d+$', content):
+                    continue
+
+                # Determine priority based on header level of the matched line
+                # # -> 1, ## -> 2, ### -> 3, #### -> 4, Body -> 99
+                match_line_content = lines[l_num-1].strip()
+                if match_line_content.startswith('# '):
+                    priority = 1
+                elif match_line_content.startswith('## '):
+                    priority = 2
+                elif match_line_content.startswith('### '):
+                    priority = 3
+                elif match_line_content.startswith('#### '):
+                    priority = 4
+                else:
+                    priority = 99
+                
                 chunk_text = f"--- 来源：{filename} {header_title} ---\n{content}\n"
-                file_chunks_map[file_path].append(chunk_text)
+                file_chunks_map[file_path].append((priority, chunk_text))
                 
         except Exception as e:
             print(f"Error reading {file_path}: {e}", file=sys.stderr)
+
+    # Sort chunks within each file by priority (Header matches first)
+    for file_path in file_chunks_map:
+        # Sort by priority (0 first), then preserve original order (stable sort)
+        file_chunks_map[file_path].sort(key=lambda x: x[0])
+        # Remove priority from list, keep only text
+        file_chunks_map[file_path] = [x[1] for x in file_chunks_map[file_path]]
 
     # Round-Robin Selection
     context_chunks = []
