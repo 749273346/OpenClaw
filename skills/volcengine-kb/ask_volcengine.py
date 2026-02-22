@@ -1,159 +1,271 @@
 
 import os
-import json
 import sys
-import glob
+import json
 import requests
-
+import subprocess
 import re
-from collections import Counter
 
 # Configuration
 KB_DIR = "/root/.openclaw/知识库资料"
 API_KEY = "sk-1df962f894304bb38233be38c9c82d6b"
-MODEL_ID = "deepseek-reasoner"
 API_URL = "https://api.deepseek.com/chat/completions"
+MODEL_ID = "deepseek-reasoner" # Default fallback
+MODELS = {
+    "fast": "deepseek-chat",
+    "reasoning": "deepseek-reasoner"
+}
 
-def chunk_markdown(content, filename):
+def call_deepseek(messages, model=None, temperature=0.3):
     """
-    Split markdown content into logical chunks based on headers.
-    Returns a list of dicts: {'content': str, 'source': str, 'score': 0}
+    Call DeepSeek API
     """
-    chunks = []
-    lines = content.split('\n')
-    current_chunk = []
-    current_header = ""
-    
-    for line in lines:
-        if line.strip().startswith('#'):
-            # New section starts, save previous chunk if not empty
-            if current_chunk:
-                full_text = "\n".join(current_chunk).strip()
-                if full_text:
-                    chunks.append({
-                        'content': f"--- 来源：{filename} {current_header} ---\n{full_text}",
-                        'source': filename,
-                        'text_only': full_text
-                    })
-            current_chunk = [line]
-            current_header = line.strip()
-        else:
-            current_chunk.append(line)
-            
-    # Add last chunk
-    if current_chunk:
-        full_text = "\n".join(current_chunk).strip()
-        if full_text:
-            chunks.append({
-                'content': f"--- 来源：{filename} {current_header} ---\n{full_text}",
-                'source': filename,
-                'text_only': full_text
-            })
-            
-    return chunks
+    if model is None:
+        model = MODEL_ID
 
-def score_chunks(chunks, query):
-    """
-    Score chunks based on keyword overlap with query.
-    Simple term frequency scoring.
-    """
-    # Tokenize query (simple char-based or jieba-like if available, here char-based n-grams for Chinese)
-    # For simplicity, just use character overlap and exact phrase matching
-    query_terms = set(query)
-    query_phrases = [query[i:i+2] for i in range(len(query)-1)] # Bi-grams
-    
-    for chunk in chunks:
-        text = chunk['text_only']
-        score = 0
-        # Exact phrase match bonus
-        if query in text:
-            score += 50
-        
-        # Bi-gram match
-        for phrase in query_phrases:
-            if phrase in text:
-                score += 5
-                
-        # Character match
-        for char in query_terms:
-            if char in text:
-                score += 1
-                
-        chunk['score'] = score
-        
-    return sorted(chunks, key=lambda x: x['score'], reverse=True)
-
-def load_relevant_context(query, top_k=15):
-    """
-    Load MD files, chunk them, score them, and return top_k chunks.
-    """
-    all_chunks = []
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": False
+    }
     try:
-        if not os.path.exists(KB_DIR):
-            return ""
+        # Increased timeout for reasoning model
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
+        response.raise_for_status()
         
-        files = glob.glob(os.path.join(KB_DIR, "*.md"))
-        for file_path in files:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                filename = os.path.basename(file_path)
-                file_chunks = chunk_markdown(content, filename)
-                all_chunks.extend(file_chunks)
-                
-        # Score and filter
-        scored_chunks = score_chunks(all_chunks, query)
-        top_chunks = scored_chunks[:top_k]
-        
-        # Sort top chunks by book priority
-        book_priority = {
-            "高速铁路电力管理规则.md": 1,
-            "铁路电力安全工作规程补充规定.md": 2,
-            "铁路电力管理规则.md": 3,
-            "铁路电力安全工作规程.md": 4
-        }
-        
-        top_chunks.sort(key=lambda x: book_priority.get(x['source'], 99))
-        
-        context_str = "\n\n".join([c['content'] for c in top_chunks])
-        return context_str
-        
+        # Check for reasoning content if available (optional logging)
+        # result = response.json()
+        # reasoning = result['choices'][0]['message'].get('reasoning_content', '')
+        # if reasoning:
+        #     print(f"DEBUG Reasoning: {reasoning[:100]}...", file=sys.stderr)
+            
+        return response.json()['choices'][0]['message']['content']
     except Exception as e:
-        print(f"Error loading context: {e}", file=sys.stderr)
+        print(f"Deepseek API Error: {e}", file=sys.stderr)
+        return None
+
+def extract_keywords(query):
+    """
+    Step 1: Use AI to extract search keywords from the query.
+    """
+    system_prompt = "你是一个关键词提取助手。请从用户的查询中提取2-3个核心技术关键词，用于在铁路安全规程文档中进行搜索。请仅返回关键词，用空格分隔，不要包含任何其他文字。"
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": query}
+    ]
+    # Use fast model for keyword extraction
+    content = call_deepseek(messages, model=MODELS["fast"], temperature=0.1)
+    if content:
+        # Clean up
+        keywords = content.strip().split()
+        # Filter out very short words or common stop words if necessary
+        return [k for k in keywords if len(k) > 1]
+    return query.split() # Fallback
+
+def search_kb(keywords):
+    """
+    Step 2: Use grep to search for keywords in the Knowledge Base.
+    Returns a list of (file_path, line_number) tuples.
+    """
+    if not keywords:
+        return []
+    
+    # Construct grep pattern: "keyword1|keyword2"
+    pattern = "|".join([re.escape(k) for k in keywords])
+    
+    # Command: grep -rnE "pattern" /path/to/kb
+    cmd = ["grep", "-rnE", pattern, KB_DIR]
+    
+    try:
+        # Run grep
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        lines = result.stdout.strip().split('\n')
+        
+        matches = []
+        for line in lines:
+            if not line: continue
+            # Output format: file_path:line_number:content
+            parts = line.split(':', 2)
+            if len(parts) >= 2:
+                file_path = parts[0]
+                try:
+                    line_num = int(parts[1])
+                    matches.append((file_path, line_num))
+                except ValueError:
+                    continue
+                    
+        return matches
+    except Exception as e:
+        print(f"Grep Error: {e}", file=sys.stderr)
+        return []
+
+def get_context(matches, max_chunks=5):
+    """
+    Step 3: Retrieve context around the matches.
+    Reads the file and extracts the section (Header to Header) containing the match.
+    """
+    if not matches:
         return ""
+        
+    file_matches = {}
+    for f, l in matches:
+        if f not in file_matches:
+            file_matches[f] = []
+        file_matches[f].append(l)
+    
+    context_chunks = []
+    processed_sections = set()
+    
+    # Priority handling (Optional, but good for ordering)
+    book_priority = {
+        "高速铁路电力管理规则.md": 1,
+        "铁路电力安全工作规程补充规定.md": 2,
+        "铁路电力管理规则.md": 3,
+        "铁路电力安全工作规程.md": 4
+    }
+    
+    # Sort files by priority
+    sorted_files = sorted(file_matches.keys(), key=lambda f: book_priority.get(os.path.basename(f), 99))
+    
+    for file_path in sorted_files:
+        if len(context_chunks) >= max_chunks:
+            break
+            
+        line_nums = file_matches[file_path]
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            line_nums.sort()
+            
+            for l_num in line_nums:
+                if len(context_chunks) >= max_chunks:
+                    break
+
+                # l_num is 1-based
+                idx = l_num - 1
+                if idx >= len(lines): continue
+                
+                # Find start of section (Header above)
+                start_idx = 0
+                header_title = "Unknown Section"
+                
+                # Look backwards for header
+                for i in range(idx, -1, -1):
+                    if lines[i].strip().startswith('#'):
+                        start_idx = i
+                        header_title = lines[i].strip()
+                        break
+                
+                # Find end of section (Next header)
+                end_idx = len(lines)
+                for i in range(idx + 1, len(lines)):
+                    if lines[i].strip().startswith('#'):
+                        end_idx = i
+                        break
+                
+                # Deduplicate sections
+                section_key = (file_path, start_idx, end_idx)
+                if section_key in processed_sections:
+                    continue
+                
+                processed_sections.add(section_key)
+                
+                content = "".join(lines[start_idx:end_idx]).strip()
+                filename = os.path.basename(file_path)
+                
+                chunk_text = f"--- 来源：{filename} {header_title} ---\n{content}\n"
+                context_chunks.append(chunk_text)
+                
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}", file=sys.stderr)
+            
+    return "\n\n".join(context_chunks)
+
+def decide_model(query):
+    """
+    Decide which model to use based on query complexity.
+    """
+    # 1. Simple heuristic for very short queries
+    if len(query) < 10:
+        return MODELS["fast"]
+
+    # 2. Use fast model to classify complexity
+    system_prompt = """
+    You are a query classifier. Determine if the user's query requires complex reasoning or simple retrieval.
+    
+    - 'fast': Factual questions, definitions, greetings, simple lookups.
+    - 'reasoning': Complex analysis, multi-step reasoning, planning, comparison, or ambiguous queries requiring interpretation.
+    
+    Output ONLY 'fast' or 'reasoning'.
+    """
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": query}
+    ]
+    
+    try:
+        content = call_deepseek(messages, model=MODELS["fast"], temperature=0.1)
+        if content and "reasoning" in content.lower():
+            return MODELS["reasoning"]
+    except:
+        pass # Fallback
+        
+    return MODELS["fast"]
 
 def chat_with_model(query):
     """
-    Primary Interaction Logic: Smart Retrieval RAG + DeepSeek Reasoner Model
+    Main logic: Keywords -> Search -> Context -> Answer
     """
     try:
-        # 1. Load Relevant Knowledge Base Context (Top 5 chunks)
-        # Reduce to 5 chunks to improve response speed (latency < 30s)
-        context_str = load_relevant_context(query, top_k=5)
+        # 0. Decide Model
+        selected_model = decide_model(query)
+        print(f"DEBUG: Selected Model: {selected_model}", file=sys.stderr)
+
+        # 1. Extract Keywords
+        keywords = extract_keywords(query)
+        # Debug info could be printed to stderr
+        # print(f"Keywords: {keywords}", file=sys.stderr)
+        
+        # 2. Search KB
+        matches = search_kb(keywords)
+        # print(f"Matches found: {len(matches)}", file=sys.stderr)
+        
+        # 3. Get Context
+        context_str = get_context(matches)
         
         system_prompt = ""
         if context_str:
             system_prompt = f"""
 # Role
-你是一位专业的“铁路电力接触网安全作业助手”。你的唯一任务是根据提供的【参考资料】回答用户关于作业流程、安全规定、操作规范等问题。
+你是一位专业的“铁路电力接触网安全作业助手”。你的任务是根据提供的【参考资料】回答用户问题。
 
-# Constraints & Rules
-1. **严格基于资料**：你必须仅根据 `<context>` 标签内提供的参考资料回答问题。
-2. **原文引用**：对于具体的规定、数值、流程步骤，必须尽可能保留原文的措辞。
-3. **内容筛选**：
-   - **仅输出有实质内容的部分**：如果某本书中没有关于用户问题的相关规定，**严禁**在回答中提及该书名或说明“未找到相关规定”。直接忽略该书即可。
-   - **避免琐碎分段**：以“条”为最小单位组织回答，不要将同一条规程拆得过细。
-4. **格式规范**：
-   - 使用 Markdown 格式输出。
-   - **引用来源必须精确到条款**：在回答的每一段或每一条末尾，必须注明来源，格式为 `> 来源：[文件名] - [第X条/第X章]`。例如：`> 来源：铁路电力安全工作规程.md - 第7条`。
-   - 如果原文中有明确的“第X条”，必须提取并显示。
-5. **输出顺序**：如果回答涉及多本书的内容，**必须严格按照以下优先级顺序**组织段落，不要打乱顺序：
-   (1) 《高速铁路电力管理规则》
-   (2) 《铁路电力安全工作规程补充规定》
-   (3) 《铁路电力管理规则》
-   (4) 《铁路电力安全工作规程》
-6. **打招呼与无关问题处理**：
-   - 如果用户只是打招呼（如“你好”、“在吗”），或者提出的问题完全超出了参考资料的范围（即与铁路电力安全作业无关），**请不要捏造答案**，而是直接回复以下固定内容：
-     "你好😊！我是专业的铁路电力接触网安全作业助手，主要为你解答《铁路电力安全工作规程》中的作业流程、安全规定、操作规范等相关问题。目前我已熟读以下四本规程：\n\n1. 《高速铁路电力管理规则》\n2. 《铁路电力安全工作规程补充规定》\n3. 《铁路电力管理规则》\n4. 《铁路电力安全工作规程》\n\n如果你有这方面的疑问，欢迎随时向我提出哦~"
+# Processing Rules
+1. **内容整合**：请对检索到的内容进行逻辑整理和二次加工，使其条理清晰。
+   - 如果不同来源的内容重复，请合并陈述。
+   - 如果内容包含数值或分类，尽量使用表格或列表形式展示。
+2. **严格基于资料**：你必须仅根据 `<context>` 标签内提供的参考资料生成回答。
+   - **严禁**添加“温馨提示”、“重要提示”等不在原文中的解释性内容。
+   - **严禁**使用外部知识补充原文未提及的信息（如解释不同专业体系的区别）。
+   - 如果原文没有直接回答用户问题，仅列出原文中与关键词相关的最接近的规定即可。
+3. **原文引用**：
+   - 具体的规定、数值、流程步骤，必须保留原文的专业措辞，不要随意改写。
+   - **引用来源**：在每个知识点或段落末尾，必须注明来源，格式为 `> 来源：[文件名] - [章节]`。
+4. **输出格式**：
+   - 使用 Markdown 格式。
+   - 结构清晰，使用标题、加粗等方式突出重点。
+
+# Output Order Priority
+(1) 《高速铁路电力管理规则》
+(2) 《铁路电力安全工作规程补充规定》
+(3) 《铁路电力管理规则》
+(4) 《铁路电力安全工作规程》
 
 # Context
 <context>
@@ -162,35 +274,19 @@ def chat_with_model(query):
 """
         else:
             # Fallback if no local context found
-            system_prompt = "你是一位专业的“铁路电力接触网安全作业助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
+             system_prompt = "你是一位专业的“铁路电力接触网安全作业助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
+
+        # 4. Generate Answer
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ]
         
-        # 2. Call DeepSeek Model
-        headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": MODEL_ID,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
-            "stream": False
-        }
-        
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
-        
-        if response.status_code == 200:
-            result = response.json()
-            # DeepSeek Reasoner might have reasoning_content, but we return content
-            content = result['choices'][0]['message']['content']
-            return content
-        else:
-            return f"错误：模型调用失败: {response.status_code} - {response.text}"
-        
+        response = call_deepseek(messages, model=selected_model) # Use selected model
+        return response
+
     except Exception as e:
-        return f"错误：模型调用失败: {e}"
+        return f"发生错误: {str(e)}"
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -198,7 +294,8 @@ if __name__ == "__main__":
         sys.exit(1)
     
     query = sys.argv[1]
-    # Handle the query
     response = chat_with_model(query)
-    # Output to stdout for monitor.ts to capture
-    print(response)
+    if response:
+        print(response)
+    else:
+        print("抱歉，我无法回答这个问题。")
