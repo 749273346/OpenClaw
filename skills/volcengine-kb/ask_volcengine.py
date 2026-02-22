@@ -5,9 +5,12 @@ import json
 import requests
 import subprocess
 import re
+import argparse
+import asyncio
 
 # Configuration
 KB_DIR = "/root/.openclaw/知识库资料"
+
 API_KEY = "sk-1df962f894304bb38233be38c9c82d6b"
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL_ID = "deepseek-reasoner" # Default fallback
@@ -226,7 +229,7 @@ def chat_with_model(query):
     try:
         # 0. Decide Model
         selected_model = decide_model(query)
-        print(f"DEBUG: Selected Model: {selected_model}", file=sys.stderr)
+        # print(f"DEBUG: Selected Model: {selected_model}", file=sys.stderr)
 
         # 1. Extract Keywords
         keywords = extract_keywords(query)
@@ -244,7 +247,13 @@ def chat_with_model(query):
         if context_str:
             system_prompt = f"""
 # Role
-你是一位专业的“铁路电力接触网安全作业助手”。你的任务是根据提供的【参考资料】回答用户问题。
+你是一位专业的“铁路电力接触网安全作业助手”。你的核心业务范围是依据以下四本规程回答问题：
+1. 《高速铁路电力管理规则》
+2. 《铁路电力安全工作规程补充规定》
+3. 《铁路电力管理规则》
+4. 《铁路电力安全工作规程》
+
+你的任务是根据提供的【参考资料】（来源于上述四本书）回答用户问题。
 
 # Processing Rules
 1. **内容整合**：请对检索到的内容进行逻辑整理和二次加工，使其条理清晰。
@@ -254,9 +263,12 @@ def chat_with_model(query):
    - **严禁**添加“温馨提示”、“重要提示”等不在原文中的解释性内容。
    - **严禁**使用外部知识补充原文未提及的信息（如解释不同专业体系的区别）。
    - 如果原文没有直接回答用户问题，仅列出原文中与关键词相关的最接近的规定即可。
-3. **原文引用**：
-   - 具体的规定、数值、流程步骤，必须保留原文的专业措辞，不要随意改写。
-   - **引用来源**：在每个知识点或段落末尾，必须注明来源，格式为 `> 来源：[文件名] - [章节]`。
+3. **原文引用与格式**：
+   - 具体的规定、数值、流程步骤，必须保留原文的专业措辞。
+   - **引用来源**：在每个知识点或段落末尾，必须注明来源，格式为 `> 来源：[文件名] 第N条`。
+     - **必须精确到“条”**：从内容中提取具体的条款编号（如“第3条”、“第15条”）。
+     - **数字格式**：条款编号必须使用**阿拉伯数字**（例如使用“第3条”而不是“第三条”）。
+     - 如果无法定位到具体条款，则引用章节标题。
 4. **输出格式**：
    - 使用 Markdown 格式。
    - 结构清晰，使用标题、加粗等方式突出重点。
@@ -288,14 +300,46 @@ def chat_with_model(query):
     except Exception as e:
         return f"发生错误: {str(e)}"
 
+try:
+    import edge_tts
+except ImportError:
+    edge_tts = None
+
+async def _gen_voice_async(text, outfile):
+    # Use a standard voice
+    communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural")
+    await communicate.save(outfile)
+
+def generate_voice(text, outfile):
+    if not edge_tts:
+        print("Error: edge-tts not installed", file=sys.stderr)
+        return False
+    try:
+        asyncio.run(_gen_voice_async(text, outfile))
+        return True
+    except Exception as e:
+        print(f"Error generating voice: {e}", file=sys.stderr)
+        return False
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 ask_volcengine.py <query>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("query", help="User query")
+    parser.add_argument("--voice", action="store_true", help="Generate voice output")
+    args = parser.parse_args()
     
-    query = sys.argv[1]
-    response = chat_with_model(query)
+    response = chat_with_model(args.query)
     if response:
         print(response)
+        if args.voice:
+            # Generate a unique filename based on hash or timestamp to avoid collisions
+            import hashlib
+            import time
+            filename = f"reply_{int(time.time())}_{hashlib.md5(response.encode()).hexdigest()[:8]}.mp3"
+            outfile = os.path.join("/tmp", filename)
+            
+            # Limit text for TTS to first 500 chars to be fast
+            tts_text = response[:500]
+            if generate_voice(tts_text, outfile):
+                print(f"\n[AUDIO_FILE: {outfile}]")
     else:
         print("抱歉，我无法回答这个问题。")
