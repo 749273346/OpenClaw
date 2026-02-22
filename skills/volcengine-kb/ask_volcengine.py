@@ -282,7 +282,7 @@ def chat_with_model(query):
             # Direct Chat Mode - Use Fast Model
             system_prompt = """
 # Role
-你是一位专业的“铁路电力线路工安全作业助手”。
+你是一位专业的“铁路电力线路工安全助手”。
 
 # Instructions
 - 当前用户正在与你进行日常交流。
@@ -317,7 +317,7 @@ def chat_with_model(query):
         if context_str:
             system_prompt = f"""
 # Role
-你是一位专业的“铁路电力线路工安全作业助手”。你的核心业务范围是依据以下四本规程回答问题：
+你是一位专业的“铁路电力线路工安全助手”。你的核心业务范围是依据以下四本规程回答问题：
 1. 《高速铁路电力管理规则》
 2. 《铁路电力安全工作规程补充规定》
 3. 《铁路电力管理规则》
@@ -357,7 +357,7 @@ def chat_with_model(query):
 """
         else:
             # Fallback if no local context found
-             system_prompt = "你是一位专业的“铁路电力线路工安全作业助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
+             system_prompt = "你是一位专业的“铁路电力线路工安全助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
 
         # 4. Generate Answer
         messages = [
