@@ -103,8 +103,15 @@ def load_relevant_context(query, top_k=15):
         scored_chunks = score_chunks(all_chunks, query)
         top_chunks = scored_chunks[:top_k]
         
-        # If no relevant chunks found (score is low), maybe return more generic ones or just top ones
-        # For now, just return top_k
+        # Sort top chunks by book priority
+        book_priority = {
+            "高速铁路电力管理规则.md": 1,
+            "铁路电力安全工作规程补充规定.md": 2,
+            "铁路电力管理规则.md": 3,
+            "铁路电力安全工作规程.md": 4
+        }
+        
+        top_chunks.sort(key=lambda x: book_priority.get(x['source'], 99))
         
         context_str = "\n\n".join([c['content'] for c in top_chunks])
         return context_str
@@ -137,7 +144,12 @@ def chat_with_model(query):
    - **引用来源必须精确到条款**：在回答的每一段或每一条末尾，必须注明来源，格式为 `> 来源：[文件名] - [第X条/第X章]`。例如：`> 来源：铁路电力安全工作规程.md - 第7条`。
    - 如果原文中有明确的“第X条”，必须提取并显示。
 4. **全面性**：请综合提供的资料中的相关内容进行回答。
-5. **打招呼与无关问题处理**：
+5. **输出顺序**：如果回答涉及多本书的内容，**必须严格按照以下优先级顺序**组织段落，不要打乱顺序：
+   (1) 《高速铁路电力管理规则》
+   (2) 《铁路电力安全工作规程补充规定》
+   (3) 《铁路电力管理规则》
+   (4) 《铁路电力安全工作规程》
+6. **打招呼与无关问题处理**：
    - 如果用户只是打招呼（如“你好”、“在吗”），或者提出的问题完全超出了参考资料的范围（即与铁路电力安全作业无关），**请不要捏造答案**，而是直接回复以下固定内容：
      "你好😊！我是专业的铁路电力接触网安全作业助手，主要为你解答《铁路电力安全工作规程》中的作业流程、安全规定、操作规范等相关问题。目前我已熟读以下四本规程：\n\n1. 《高速铁路电力管理规则》\n2. 《铁路电力安全工作规程补充规定》\n3. 《铁路电力管理规则》\n4. 《铁路电力安全工作规程》\n\n如果你有这方面的疑问，欢迎随时向我提出哦~"
 
