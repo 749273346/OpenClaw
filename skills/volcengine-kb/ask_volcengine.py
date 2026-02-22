@@ -296,6 +296,7 @@ def chat_with_model(query):
             return call_deepseek(messages, model=MODELS["fast"])
 
         # Work Mode: RAG Flow
+        print("[STATUS: SEARCHING_KB]", flush=True)
         # 0.1 Decide Model
         selected_model = decide_model(query)
         
