@@ -107,10 +107,11 @@ def search_kb(keywords):
         print(f"Grep Error: {e}", file=sys.stderr)
         return []
 
-def get_context(matches, max_chunks=5):
+def get_context(matches, max_chunks=12):
     """
     Step 3: Retrieve context around the matches.
     Reads the file and extracts the section (Header to Header) containing the match.
+    Implements Round-Robin selection to ensure coverage across multiple books.
     """
     if not matches:
         return ""
@@ -121,10 +122,7 @@ def get_context(matches, max_chunks=5):
             file_matches[f] = []
         file_matches[f].append(l)
     
-    context_chunks = []
-    processed_sections = set()
-    
-    # Priority handling (Optional, but good for ordering)
+    # Priority handling
     book_priority = {
         "高速铁路电力管理规则.md": 1,
         "铁路电力安全工作规程补充规定.md": 2,
@@ -135,10 +133,12 @@ def get_context(matches, max_chunks=5):
     # Sort files by priority
     sorted_files = sorted(file_matches.keys(), key=lambda f: book_priority.get(os.path.basename(f), 99))
     
+    # Pre-fetch all candidate chunks from all files
+    file_chunks_map = {} 
+    processed_sections = set()
+
     for file_path in sorted_files:
-        if len(context_chunks) >= max_chunks:
-            break
-            
+        file_chunks_map[file_path] = []
         line_nums = file_matches[file_path]
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -147,9 +147,6 @@ def get_context(matches, max_chunks=5):
             line_nums.sort()
             
             for l_num in line_nums:
-                if len(context_chunks) >= max_chunks:
-                    break
-
                 # l_num is 1-based
                 idx = l_num - 1
                 if idx >= len(lines): continue
@@ -183,10 +180,27 @@ def get_context(matches, max_chunks=5):
                 filename = os.path.basename(file_path)
                 
                 chunk_text = f"--- 来源：{filename} {header_title} ---\n{content}\n"
-                context_chunks.append(chunk_text)
+                file_chunks_map[file_path].append(chunk_text)
                 
         except Exception as e:
             print(f"Error reading {file_path}: {e}", file=sys.stderr)
+
+    # Round-Robin Selection
+    context_chunks = []
+    
+    while len(context_chunks) < max_chunks:
+        added_any = False
+        for file_path in sorted_files:
+            if len(context_chunks) >= max_chunks:
+                break
+            
+            chunks = file_chunks_map.get(file_path, [])
+            if chunks:
+                context_chunks.append(chunks.pop(0)) # Take the next chunk from this file
+                added_any = True
+        
+        if not added_any:
+            break
             
     return "\n\n".join(context_chunks)
 
@@ -247,7 +261,7 @@ def chat_with_model(query):
         if context_str:
             system_prompt = f"""
 # Role
-你是一位专业的“铁路电力接触网安全作业助手”。你的核心业务范围是依据以下四本规程回答问题：
+你是一位专业的“铁路电力线路工安全作业助手”。你的核心业务范围是依据以下四本规程回答问题：
 1. 《高速铁路电力管理规则》
 2. 《铁路电力安全工作规程补充规定》
 3. 《铁路电力管理规则》
@@ -271,6 +285,7 @@ def chat_with_model(query):
      - 如果无法定位到具体条款，则引用章节标题。
 4. **输出格式**：
    - 使用 Markdown 格式。
+   - 涉及数据对比或表格内容时，必须使用 Markdown 表格形式展示。
    - 结构清晰，使用标题、加粗等方式突出重点。
 
 # Output Order Priority
@@ -286,7 +301,7 @@ def chat_with_model(query):
 """
         else:
             # Fallback if no local context found
-             system_prompt = "你是一位专业的“铁路电力接触网安全作业助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
+             system_prompt = "你是一位专业的“铁路电力线路工安全作业助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
 
         # 4. Generate Answer
         messages = [
