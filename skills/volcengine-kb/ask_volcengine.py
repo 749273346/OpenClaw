@@ -204,6 +204,37 @@ def get_context(matches, max_chunks=12):
             
     return "\n\n".join(context_chunks)
 
+def classify_intent(query):
+    """
+    Classify the query as 'chat' or 'work'.
+    """
+    system_prompt = """
+    你是一个意图分类助手。请判断用户的查询是“日常闲聊”还是“工作查询”。
+    
+    - 'chat': 问候（如“你好”、“早上好”）、询问身份（如“你是谁”）、感谢（如“谢谢”）、简单的日常对话。
+    - 'work': 询问铁路电力规程、安全规定、作业流程、技术参数、设备标准、事故处理等专业问题。
+    
+    请仅输出 'chat' 或 'work'。
+    """
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": query}
+    ]
+    
+    try:
+        content = call_deepseek(messages, model=MODELS["fast"], temperature=0.1)
+        if content:
+            content = content.strip().lower()
+            if "chat" in content:
+                return "chat"
+            if "work" in content:
+                return "work"
+    except:
+        pass # Fallback
+        
+    return "work" # Default to work if unsure
+
 def decide_model(query):
     """
     Decide which model to use based on query complexity.
@@ -238,13 +269,36 @@ def decide_model(query):
 
 def chat_with_model(query):
     """
-    Main logic: Keywords -> Search -> Context -> Answer
+    Main logic: Intent -> (Chat OR Keywords -> Search -> Context) -> Answer
     """
     try:
-        # 0. Decide Model
-        selected_model = decide_model(query)
-        # print(f"DEBUG: Selected Model: {selected_model}", file=sys.stderr)
+        # 0. Classify Intent
+        intent = classify_intent(query)
+        # print(f"DEBUG: Intent: {intent}", file=sys.stderr)
+        
+        if intent == "chat":
+            # Direct Chat Mode - Use Fast Model
+            system_prompt = """
+# Role
+你是一位专业的“铁路电力线路工安全作业助手”。
+你的职责是辅助铁路电力线路工进行安全作业查询，解答关于规程、安全距离、操作流程等问题。
 
+# Instructions
+- 当前用户正在与你进行日常交流（如问候、询问身份等）。
+- 请以专业、亲切、简洁的口吻回复。
+- 如果用户询问你的身份，请明确介绍你的职责。
+- 引导用户提出具体的业务问题（例如：“您可以问我关于安全距离、检修流程等方面的问题”）。
+"""
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ]
+            return call_deepseek(messages, model=MODELS["fast"])
+
+        # Work Mode: RAG Flow
+        # 0.1 Decide Model
+        selected_model = decide_model(query)
+        
         # 1. Extract Keywords
         keywords = extract_keywords(query)
         # Debug info could be printed to stderr
