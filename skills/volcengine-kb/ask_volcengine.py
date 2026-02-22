@@ -3,15 +3,16 @@ import os
 import json
 import sys
 import glob
-from volcenginesdkarkruntime import Ark
+import requests
 
 import re
 from collections import Counter
 
 # Configuration
 KB_DIR = "/root/.openclaw/知识库资料"
-API_KEY = "99073b82-9920-42ea-92d1-7b75a1e3f274"
-ENDPOINT_ID = "ep-m-20260222201045-gvjbn"
+API_KEY = "sk-1df962f894304bb38233be38c9c82d6b"
+MODEL_ID = "deepseek-reasoner"
+API_URL = "https://api.deepseek.com/chat/completions"
 
 def chunk_markdown(content, filename):
     """
@@ -122,15 +123,14 @@ def load_relevant_context(query, top_k=15):
 
 def chat_with_model(query):
     """
-    Primary Interaction Logic: Smart Retrieval RAG + Volcengine Ark Model
+    Primary Interaction Logic: Smart Retrieval RAG + DeepSeek Reasoner Model
     """
     try:
-        client = Ark(api_key=API_KEY)
-        
         # 1. Load Relevant Knowledge Base Context (Top 5 chunks)
         # Reduce to 5 chunks to improve response speed (latency < 30s)
         context_str = load_relevant_context(query, top_k=5)
         
+        system_prompt = ""
         if context_str:
             system_prompt = f"""
 # Role
@@ -139,11 +139,13 @@ def chat_with_model(query):
 # Constraints & Rules
 1. **严格基于资料**：你必须仅根据 `<context>` 标签内提供的参考资料回答问题。
 2. **原文引用**：对于具体的规定、数值、流程步骤，必须尽可能保留原文的措辞。
-3. **格式规范**：
+3. **内容筛选**：
+   - **仅输出有实质内容的部分**：如果某本书中没有关于用户问题的相关规定，**严禁**在回答中提及该书名或说明“未找到相关规定”。直接忽略该书即可。
+   - **避免琐碎分段**：以“条”为最小单位组织回答，不要将同一条规程拆得过细。
+4. **格式规范**：
    - 使用 Markdown 格式输出。
    - **引用来源必须精确到条款**：在回答的每一段或每一条末尾，必须注明来源，格式为 `> 来源：[文件名] - [第X条/第X章]`。例如：`> 来源：铁路电力安全工作规程.md - 第7条`。
    - 如果原文中有明确的“第X条”，必须提取并显示。
-4. **全面性**：请综合提供的资料中的相关内容进行回答。
 5. **输出顺序**：如果回答涉及多本书的内容，**必须严格按照以下优先级顺序**组织段落，不要打乱顺序：
    (1) 《高速铁路电力管理规则》
    (2) 《铁路电力安全工作规程补充规定》
@@ -162,16 +164,30 @@ def chat_with_model(query):
             # Fallback if no local context found
             system_prompt = "你是一位专业的“铁路电力接触网安全作业助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
         
-        # 2. Call Ark Model
-        # Using stream=False for simplicity in script, monitor.ts handles timeout
-        completion = client.chat.completions.create(
-            model=ENDPOINT_ID,
-            messages=[
+        # 2. Call DeepSeek Model
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": MODEL_ID,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}
-            ]
-        )
-        return completion.choices[0].message.content
+            ],
+            "stream": False
+        }
+        
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            result = response.json()
+            # DeepSeek Reasoner might have reasoning_content, but we return content
+            content = result['choices'][0]['message']['content']
+            return content
+        else:
+            return f"错误：模型调用失败: {response.status_code} - {response.text}"
         
     except Exception as e:
         return f"错误：模型调用失败: {e}"
