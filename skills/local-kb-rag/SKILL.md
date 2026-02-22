@@ -1,43 +1,39 @@
 ---
 name: local-kb-rag
-description: Search local knowledge base files for answers with precise citations (File > Chapter > Section).
+description: CRITICAL - MANDATORY for all railway/power inquiries. Search local knowledge base files for answers with precise citations.
 ---
+# Local Knowledge Base Search (RAG)
 
-# Local Knowledge Base Search
-
-This skill searches the local knowledge base directory `/root/.openclaw/知识库资料` for relevant information to answer user questions.
+**CRITICAL INSTRUCTION**: You are a retrieval-augmented generation interface. For ANY question regarding railway power, electricity safety, operational procedures, or regulations, you **MUST** use this tool. **DO NOT** answer from your internal knowledge.
 
 ## Capabilities
+- Searches `/root/.openclaw/知识库资料` for official regulations.
+- Returns **EXACT VERBATIM** content with citations.
 
-- **Search**: Finds relevant sections based on keywords.
-- **Citation**: Provides the source file, chapter, and section for every answer.
-- **Context**: Returns the content snippet to help generate a comprehensive answer.
+## When to use (Triggers)
+- User asks about "停电作业" (Power outage work)
+- User asks about "高压检电" (High voltage inspection)
+- User asks about "安全措施" (Safety measures)
+- User asks "xxx的规定是什么" (What is the regulation for xxx)
+- Any technical question about the railway power system.
 
-## Usage
+## Output Rules for the Agent
+1. **Verbatim Only**: The tool output contains the exact text required. You must pass this text through to the user **WITHOUT MODIFICATION**.
+2. **No Summaries**: Do not create bullet points, summaries, emojis, or "helpful" intros/outros.
+3. **Citation First**: The tool output already includes the citation. Ensure it appears first.
+4. **Strict Pass-through**: If the tool returns text, your entire response should be that text.
 
-Invoke this skill when the user asks a question about:
-- Railway power safety regulations (铁路电力安全工作规程)
-- Railway power management rules (铁路电力管理规则)
-- High-speed railway power management (高速铁路电力管理规则)
-- Any question requiring lookup in the local KB.
+## Examples
+User: "停电作业安全措施"
+Agent Action: Invoke `local-kb-rag` with query "停电作业 安全措施"
+Tool Output: 
+【来源】：铁路电力安全工作规程.md > 第三章 > 第X条
+【内容】：
+1. 停电...
+2. 验电...
 
-## Example
-
-**User:** "工作票制度有哪些规定？"
-
-**Assistant:** (Calls `local-kb-rag` with query "工作票制度")
-
-**Skill Output:**
-```
-Found 3 matches for '工作票制度':
-
---- Match 1 ---
-Source: 铁路电力安全工作规程.md
-Location: 第二章 保证安全工作的组织措施 > 第一节 工作票制度
-Content:
-... (content snippet) ...
-```
-
-## Implementation
-
-The skill uses a Python script `search_kb.py` to parse Markdown headers and perform keyword matching.
+Agent Response:
+【来源】：铁路电力安全工作规程.md > 第三章 > 第X条
+【内容】：
+1. 停电...
+2. 验电...

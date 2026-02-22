@@ -72,17 +72,19 @@ def search(query):
     results = []
     files = glob.glob(os.path.join(KB_DIR, "*.md"))
     
-    # Simple tokenization: split by spaces, also split by non-word chars if needed
-    # For Chinese, maybe just split by spaces for now as user input is likely space-separated or full sentence
-    # Better: simple unigram/bigram or just character matching for Chinese
-    # Let's try splitting query into keywords
-    query_terms = [t for t in query.split() if t]
-    if not query_terms:
-        # If no spaces, and looks like Chinese, maybe treat as single phrase
-        # But also could be multiple words concatenated
-        # For now, just use the whole query
-        query_terms = [query]
+    # Pre-process query to handle natural language questions
+    # Replace common Chinese particles/question words with spaces to create keywords
+    clean_q = query
+    for char in ["是什么", "有哪些", "怎么做", "的", "吗", "？", "?", "是", "哪些", "什么"]:
+        clean_q = clean_q.replace(char, " ")
     
+    # Split by spaces to get terms
+    query_terms = [t for t in clean_q.split() if t]
+    
+    if not query_terms:
+        # Fallback to original if everything was stripped (unlikely but possible)
+        query_terms = [query]
+            
     for file_path in files:
         sections = parse_markdown(file_path)
         for section in sections:
@@ -124,35 +126,40 @@ def search(query):
                 if query.lower() in content_lower:
                     score += 20
                 
-                # Context snippet extraction
-                # Find the first occurrence of the most significant term (or any term)
-                # Prefer terms that appear in title first
-                best_idx = -1
-                for term in query_terms:
-                    idx = content_lower.find(term.lower())
-                    if idx != -1:
-                        best_idx = idx
-                        break
-                
-                if best_idx == -1: best_idx = 0
-                
-                start = max(0, best_idx - 50)
-                end = min(len(content), best_idx + 450)
-                snippet = content[start:end]
-                if start > 0: snippet = "..." + snippet
-                if end < len(content): snippet = snippet + "..."
+                # Context snippet extraction - REMOVED to return full content as requested
+                # The user wants the exact content verbatim, no summarization or truncation.
                 
                 results.append({
                     'score': score,
                     'file': section['file'],
                     'path': path_str,
-                    'content': snippet,
-                    # 'full_content': content # Removed to reduce output size
+                    'content': content, # Return FULL content
                 })
     
     # Sort by score descending
     results.sort(key=lambda x: x['score'], reverse=True)
-    return results[:5] # Return top 5 matches
+    
+    # Format the output strictly as requested by the user
+    # "回答之前告诉这是哪个文件哪一章的第几条，然后将结果原封不动的返回出来"
+    final_output = []
+    if not results:
+        print(f"未找到关于 '{query}' 的相关内容。")
+        return []
+
+    # Only return the top 1 result to avoid overwhelming the user, or maybe top 3 if requested.
+    # The user said "将结果原封不动的返回出来", implying specific answers.
+    # Let's return the top match fully, and maybe mention others briefly if needed.
+    # For now, let's return top 1 full content to ensure "verbatim" without hitting token limits too hard.
+    # Actually, the user might want to see multiple if they are relevant.
+    # Let's try returning top 1-2 matches with full content.
+    
+    final_output = []
+    for i, res in enumerate(results[:1]): # Limit to top 1 for precision as requested
+        output = f"【来源】：{res['file']} > {res['path']}\n【内容】：\n{res['content']}\n"
+        final_output.append(output)
+    
+    print("\n".join(final_output))
+    return results[:1]
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -160,15 +167,4 @@ if __name__ == "__main__":
         sys.exit(1)
     
     query = " ".join(sys.argv[1:])
-    matches = search(query)
-    
-    if not matches:
-        print("No matches found.")
-    else:
-        print(f"Found {len(matches)} matches for '{query}':\n")
-        for i, match in enumerate(matches, 1):
-            print(f"--- Match {i} ---")
-            print(f"Source: {match['file']}")
-            print(f"Location: {match['path']}")
-            print(f"Content:\n{match['content'][:500]}...") # Limit content preview
-            print("\n")
+    search(query)
