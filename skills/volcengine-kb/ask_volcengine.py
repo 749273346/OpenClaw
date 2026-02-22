@@ -8,6 +8,9 @@ import subprocess
 import re
 import argparse
 import asyncio
+import base64
+
+import imghdr
 
 # Configuration
 KB_DIR = "/root/.openclaw/知识库资料"
@@ -19,6 +22,15 @@ MODELS = {
     "fast": "deepseek-chat",
     "reasoning": "deepseek-reasoner"
 }
+
+# Zhipu AI Configuration
+try:
+    from zhipuai import ZhipuAI
+    ZHIPU_AVAILABLE = True
+except ImportError:
+    ZHIPU_AVAILABLE = False
+
+ZHIPU_API_KEY = "8160d175a76d4780bdd28cfa9a6324a2.PKy7AzPDMtROEBIV"
 
 def call_deepseek(messages, model=None, temperature=0.3):
     """
@@ -52,6 +64,64 @@ def call_deepseek(messages, model=None, temperature=0.3):
         return response.json()['choices'][0]['message']['content']
     except Exception as e:
         print(f"Deepseek API Error: {e}", file=sys.stderr)
+        return None
+
+def process_image_zhipu(image_path, user_query):
+    """
+    Use Zhipu GLM-4V to analyze the image.
+    """
+    if not ZHIPU_AVAILABLE:
+        return "Error: zhipuai library not installed."
+
+    print(f"[STATUS: CALLING_ZHIPU] Analyzing image: {image_path}", file=sys.stderr, flush=True)
+
+    try:
+        client = ZhipuAI(api_key=ZHIPU_API_KEY)
+        
+        with open(image_path, 'rb') as img_file:
+            img_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+        
+        # Prompt designed to extract relevant information and determine relevance
+        prompt = f"""
+        请仔细分析这张图片。
+        1. 详细描述图片中的内容（物体、文字、场景、设备状态等）。
+        2. 判断该图片内容是否与以下领域相关：
+           - 铁路电力线路（Railway Power Lines）
+           - 电力维修与维护（Maintenance）
+           - 安全工器具（Safety Equipment）
+           - 变电所或电力作业（Electricity Operations）
+        3. 如果用户提供了问题：“{user_query}”，请结合图片内容回答。
+        
+        请按以下格式输出：
+        Description: <详细描述>
+        Related: <Yes/No>
+        Reasoning: <判断理由>
+        Answer: <结合图片对用户问题的回答，如果用户没问问题则留空>
+        """
+
+        response = client.chat.completions.create(
+            model="glm-4v", 
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_base64}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Zhipu API Error: {e}", file=sys.stderr)
         return None
 
 def extract_keywords(query):
@@ -295,13 +365,41 @@ def decide_model(query):
         
     return MODELS["fast"]
 
-def chat_with_model(query):
+def chat_with_model(query, image_path=None):
     """
     Main logic: Intent -> (Chat OR Keywords -> Search -> Context) -> Answer
     """
     try:
-        # 0. Classify Intent
-        intent = classify_intent(query)
+        # Check for image processing
+        if image_path:
+            print(f"[STATUS: ANALYZING_IMAGE] Path: {image_path}", file=sys.stderr, flush=True)
+            analysis_result = process_image_zhipu(image_path, query)
+            
+            if not analysis_result:
+                return "抱歉，图片分析失败。"
+                
+            # Parse Analysis Result
+            description = ""
+            is_related = False
+            
+            if "Description:" in analysis_result:
+                description = analysis_result.split("Description:")[1].split("Related:")[0].strip()
+            if "Related: Yes" in analysis_result or "Related: yes" in analysis_result:
+                is_related = True
+            
+            # If unrelated, return early
+            if not is_related:
+                # Extract the reason or description to give feedback
+                return f"【检测结果】\n{analysis_result}\n\n检测到该图片内容与铁路电力线路工作无关。请上传与工作相关的图片（如设备缺陷、作业场景等）。"
+            
+            # If related, use description + query to search KB
+            search_query = f"{query} {description}"
+            # Continue to RAG flow with enhanced query
+            query = search_query
+            print(f"[STATUS: IMAGE_RELATED] Description: {description[:50]}...", file=sys.stderr, flush=True)
+
+        # 0. Classify Intent (Skip if image was processed and found related, force work mode)
+        intent = "work" if image_path else classify_intent(query)
         # print(f"DEBUG: Intent: {intent}", file=sys.stderr)
         
         if intent == "chat":
@@ -352,7 +450,14 @@ def chat_with_model(query):
 你的任务是根据提供的【参考资料】（来源于上述四本书）回答用户问题。
 
 # Processing Rules
-1. **内容整合**：请对检索到的内容进行逻辑整理和二次加工，使其条理清晰。
+1. **表格格式绝对强制要求**：
+   - 所有输出的表格，其表头分隔符**必须**且**只能**使用 `| :---: |`（即所有列居中对齐）。
+   - **严禁**使用 `| --- |` 或 `| :--- |`。
+   - 示例：
+     | 序号 | 项目 |
+     | :---: | :---: |
+     | 1 | 内容 |
+2. **内容整合**：请对检索到的内容进行逻辑整理和二次加工，使其条理清晰。
    - 如果不同来源的内容重复，请合并陈述。
    - 如果内容包含数值或分类，尽量使用表格或列表形式展示。
 2. **严格基于资料**：你必须仅根据 `<context>` 标签内提供的参考资料生成回答。
@@ -367,7 +472,13 @@ def chat_with_model(query):
      - 如果无法定位到具体条款，则引用章节标题。
 4. **输出格式**：
    - 使用 Markdown 格式。
-   - 涉及数据对比或表格内容时，必须使用 Markdown 表格形式展示，并**确保所有列的内容居中对齐**（即表头分隔符使用 `| :---: |`）。
+   - **表格格式强制要求**：涉及数据对比或列表时，必须使用 Markdown 表格。**所有列必须居中对齐**。
+     - **必须**使用 `| :---: |` 作为表头分隔符。
+     - **严禁**使用默认对齐（`---`）或左对齐（`:---`）。
+     - 正确示例：
+       | 序号 | 项目 | 内容 |
+       | :---: | :---: | :---: |
+       | 1 | ... | ... |
    - 结构清晰，使用标题、加粗等方式突出重点。
 
 # Output Order Priority
@@ -383,7 +494,10 @@ def chat_with_model(query):
 """
         else:
             # Fallback if no local context found
-             system_prompt = "你是一位专业的“铁路电力线路工安全助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
+             if image_path:
+                 system_prompt = "你是一位专业的“铁路电力线路工安全助手”。用户上传了一张图片，虽然本地知识库没有找到直接匹配的规程，但请根据你对图片的理解和通用电力安全知识，给出专业的分析和建议。请在回答末尾注明：“（注：本地知识库未找到相关规程，本回答基于通用电力知识及图片分析生成）”"
+             else:
+                 system_prompt = "你是一位专业的“铁路电力线路工安全助手”。请根据你的通用知识回答用户问题。请注意，你的回答可能不包含具体的规程引用，请在回答末尾注明：“（注：本地知识库未找到相关内容，本回答基于通用知识生成，仅供参考）”"
 
         # 4. Generate Answer
         messages = [
@@ -418,16 +532,118 @@ def generate_voice(text, outfile):
         print(f"Error generating voice: {e}", file=sys.stderr)
         return False
 
+def enforce_table_centering(text):
+    """
+    Parses markdown text and enforces centered alignment (| :---: |) for all tables.
+    """
+    lines = text.split('\n')
+    formatted_lines = []
+    
+    # Regex to identify a table separator line.
+    # It must contain at least one hyphen, and consist only of |, -, :, and whitespace.
+    separator_pattern = re.compile(r'^\s*\|?[\s\:\-]+\|\s*$')
+    
+    for line in lines:
+        if separator_pattern.match(line) and '-' in line:
+            # It's a separator line. Force centering.
+            # Split by pipe, but keep empty strings for leading/trailing pipes
+            parts = line.split('|')
+            new_parts = []
+            for i, part in enumerate(parts):
+                # Check if this part is actually a column (not the empty start/end if pipe-enclosed)
+                # But simple heuristic: if it contains hyphens, replace it.
+                if '-' in part:
+                    new_parts.append(' :---: ')
+                else:
+                    # Keep empty parts (for leading/trailing pipes) or whitespace parts
+                    new_parts.append(part)
+            formatted_lines.append('|'.join(new_parts))
+        else:
+            formatted_lines.append(line)
+            
+    return '\n'.join(formatted_lines)
+
+def print_centered_response(response):
+    """
+    Applies table centering and prints the response.
+    """
+    if not response:
+        return
+    formatted_response = enforce_table_centering(response)
+    print(formatted_response)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("query", help="User query")
     parser.add_argument("--voice", action="store_true", help="Generate voice output")
+    parser.add_argument("--image", help="Path to image file", default=None)
+    parser.add_argument("--test-description", help="[TEST ONLY] Simulate image analysis result", default=None)
+    parser.add_argument("--analyze-only", action="store_true", help="Only perform image analysis and return the result")
     args = parser.parse_args()
     
+    # Check for [FILE_PATH: ...] in query if --image not provided
+    image_path = args.image
+    query_text = args.query
+    test_description = args.test_description
+    
+    if not image_path:
+        # Debug: print received query
+        # print(f"[DEBUG] Received query: {query_text}", file=sys.stderr)
+        
+        match = re.search(r'\[FILE_PATH:\s*(.*?)\]', query_text)
+        if match:
+            extracted_path = match.group(1).strip()
+            # Relaxed check: trust the tag, but verify file existence
+            if os.path.exists(extracted_path):
+                 # Verify it is an image
+                 # Note: imghdr is deprecated, using simple extension check as fallback
+                 if extracted_path.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.webp')):
+                     image_path = extracted_path
+                 else:
+                     # Try imghdr if available
+                     try:
+                         if imghdr.what(extracted_path):
+                             image_path = extracted_path
+                         else:
+                             print(f"[WARN] File is not an image (imghdr failed): {extracted_path}", file=sys.stderr)
+                     except:
+                         # If imghdr fails or not available, assume it might be an image if user sent it as such
+                         # But to be safe, we print a warning
+                         print(f"[WARN] File type check failed for: {extracted_path}", file=sys.stderr)
+            else:
+                 print(f"[WARN] Extracted path not found: {extracted_path}", file=sys.stderr)
+
+    # If --analyze-only is set, just process the image and exit
+    if args.analyze_only:
+        if image_path:
+            print(f"[STATUS: ANALYZING_ONLY] Path: {image_path}", file=sys.stderr)
+            analysis = process_image_zhipu(image_path, query_text)
+            print(analysis)
+        else:
+            print("No valid image path found for analysis.")
+        sys.exit(0)
+
     try:
-        response = chat_with_model(args.query)
+        # Check for test description override
+        if test_description:
+            print(f"[STATUS: ANALYZING_IMAGE] (Simulated) Description: {test_description}", file=sys.stderr, flush=True)
+            # Simulate the return format of process_image_zhipu
+            analysis_result = f"Description: {test_description}\nRelated: Yes\nReasoning: Simulated test case related to railway power.\nAnswer: "
+            
+            # Manually trigger the logic that would happen inside chat_with_model
+            description = test_description
+            is_related = True
+            search_query = f"{query_text} {description}"
+            query_text = search_query
+            print(f"[STATUS: IMAGE_RELATED] Description: {description[:50]}...", file=sys.stderr, flush=True)
+            # Force intent to work
+            # Proceed to chat_with_model with modified query and no image_path (to avoid re-analysis)
+            response = chat_with_model(query_text, image_path=None)
+        else:
+            response = chat_with_model(query_text, image_path=image_path)
+
         if response:
-            print(response)
+            print_centered_response(response)
             if args.voice:
                 # Generate a unique filename based on hash or timestamp to avoid collisions
                 import hashlib

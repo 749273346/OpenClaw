@@ -23,6 +23,7 @@
             classDef logicNode fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
             classDef kbNode fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
             classDef llmNode fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+            classDef imageNode fill:#ffccbc,stroke:#d84315,stroke-width:2px;
 
             %% Nodes
             User(["用户 (企业微信)"]):::userNode
@@ -34,6 +35,12 @@
             end
             
             subgraph CoreLogic ["核心逻辑层 (Python)"]
+                ImageCheck{"含图片?"}:::logicNode
+                ZhipuAnalysis["智谱 GLM-4V 图像分析"]:::imageNode
+                RelevanceCheck{"相关性判断?"}:::imageNode
+                MergeContext["合并: 描述+问题"]:::imageNode
+                RejectImage["提示: 非工作相关"]:::imageNode
+
                 Intent{"意图识别"}:::logicNode
                 ChatPrompt["加载闲聊 Prompt"]:::logicNode
                 FastLLM1["调用 DeepSeek-Chat"]:::llmNode
@@ -53,10 +60,18 @@
             end
 
             %% Connections
-            User -->|"1. 发送消息"| Monitor
+            User -->|"1. 发送消息/图片"| Monitor
             Monitor -->|"2. 立即反馈"| Thinking
             Monitor -->|"3. 调用脚本"| PythonScript
-            PythonScript --> Intent
+            PythonScript --> ImageCheck
+            
+            ImageCheck -- "是" --> ZhipuAnalysis
+            ZhipuAnalysis --> RelevanceCheck
+            RelevanceCheck -- "否" --> RejectImage
+            RelevanceCheck -- "是 (强制工作模式)" --> MergeContext
+            MergeContext --> Complexity
+            
+            ImageCheck -- "否" --> Intent
             
             Intent -- "闲聊 (Chat)" --> ChatPrompt
             ChatPrompt --> FastLLM1
@@ -75,6 +90,7 @@
             
             FinalLLM -->|"4. 返回结果"| Monitor
             FastLLM1 -->|"4. 返回结果"| Monitor
+            RejectImage -->|"4. 返回结果"| Monitor
             Monitor -->|"5. 推送消息"| User
     </div>
 </body>

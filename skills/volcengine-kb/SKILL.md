@@ -9,10 +9,11 @@ This skill allows the agent to query the Volcengine Knowledge Base (powered by D
   - Safety regulations (安全规程)
   - Emergency handling (应急处理)
   - Technical specifications (技术规范)
+  - **Image Analysis**: Identify and analyze railway power equipment, defects, or scenes from uploaded images.
 - Even for simple questions like "What is X?", prefer using this skill to get an authoritative answer from the Knowledge Base.
 
 ## Parameters
-- `query`: The user's question or search query.
+- `query`: The user's question or search query. Can include `[FILE_PATH: /path/to/image]` for image analysis.
 
 ## Returns
 - A markdown-formatted answer with citations from the Knowledge Base.
