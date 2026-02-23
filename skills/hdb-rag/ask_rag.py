@@ -683,19 +683,18 @@ def enforce_table_centering(text):
     lines = text.split('\n')
     formatted_lines = []
     
-    # Regex to identify a table separator line.
-    # It must contain at least one hyphen, and consist only of |, -, :, and whitespace.
-    separator_pattern = re.compile(r'^\s*\|?[\s\:\-]+\|\s*$')
+    # Regex to identify a markdown table separator line like:
+    # | --- | :---: | ---: |
+    separator_pattern = re.compile(r'^\s*\|(?:\s*:?-+:?\s*\|)+\s*$')
     
     for line in lines:
         if separator_pattern.match(line) and '-' in line:
-            # It's a separator line. Force centering.
-            # Split by pipe, but keep empty strings for leading/trailing pipes
+            # It's a separator line. Force centering for each column.
+            # Split by pipe, keep empties for leading/trailing pipes
             parts = line.split('|')
             new_parts = []
             for i, part in enumerate(parts):
-                # Check if this part is actually a column (not the empty start/end if pipe-enclosed)
-                # But simple heuristic: if it contains hyphens, replace it.
+                # Replace any cell that looks like a separator with centered alignment
                 if '-' in part:
                     new_parts.append(' :---: ')
                 else:
@@ -707,13 +706,51 @@ def enforce_table_centering(text):
             
     return '\n'.join(formatted_lines)
 
+def unwrap_noncode_fences(text: str) -> str:
+    fence_re = re.compile(r"```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)\n```", re.MULTILINE)
+    code_like = re.compile(
+        r"(class\s+\w+|def\s+\w+\s*\(|function\s*\(|var\s+|let\s+|const\s+|#include|import\s+|SELECT\s+|curl\s+)",
+        re.IGNORECASE,
+    )
+    def _replace(m):
+        lang = (m.group(1) or "").lower().strip()
+        body = m.group(2)
+        contains_md = any(sym in body for sym in ["|", "> ", "# ", "## ", "### ", "来源：", "条"])
+        looks_like_code = bool(code_like.search(body))
+        # If explicitly 'markdown' or looks like markdown and not code, unwrap
+        if lang in ("md", "markdown") or (contains_md and not looks_like_code):
+            return body.strip()
+        return m.group(0)
+    previous = None
+    current = text
+    while current != previous:
+        previous = current
+        current = fence_re.sub(_replace, current)
+    return current
+
+def normalize_blockquotes(text: str) -> str:
+    lines = text.splitlines()
+    out = []
+    for i, line in enumerate(lines):
+        l = line
+        if l.strip().startswith("来源：") and not l.strip().startswith(">"):
+            l = "> " + l.strip()
+        if l.strip().startswith(">"):
+            if out and out[-1].strip() != "":
+                out.append("")
+        out.append(l)
+    return "\n".join(out)
+
+def sanitize_markdown(text: str) -> str:
+    cleaned = unwrap_noncode_fences(text)
+    centered = enforce_table_centering(cleaned)
+    normalized = normalize_blockquotes(centered)
+    return normalized
+
 def print_centered_response(response):
-    """
-    Applies table centering and prints the response.
-    """
     if not response:
         return
-    formatted_response = enforce_table_centering(response)
+    formatted_response = sanitize_markdown(response)
     print(formatted_response)
 
 if __name__ == "__main__":
