@@ -9,11 +9,17 @@ import re
 import argparse
 import asyncio
 import base64
+import pickle
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import jieba
+from rank_bm25 import BM25Okapi
 
 import imghdr
 
 # Configuration
 KB_DIR = "/root/.openclaw/知识库资料"
+INDEX_FILE = "/root/.openclaw/kb_index.pkl"
 
 API_KEY = "sk-1df962f894304bb38233be38c9c82d6b"
 API_URL = "https://api.deepseek.com/chat/completions"
@@ -31,6 +37,111 @@ except ImportError:
     ZHIPU_AVAILABLE = False
 
 ZHIPU_API_KEY = "8160d175a76d4780bdd28cfa9a6324a2.PKy7AzPDMtROEBIV"
+
+KB_INDEX = None
+
+def load_index():
+    global KB_INDEX
+    if KB_INDEX:
+        return KB_INDEX
+    
+    if os.path.exists(INDEX_FILE):
+        try:
+            with open(INDEX_FILE, 'rb') as f:
+                KB_INDEX = pickle.load(f)
+            print("[STATUS] KB Index loaded successfully.", file=sys.stderr)
+        except Exception as e:
+            print(f"[ERROR] Failed to load KB Index: {e}", file=sys.stderr)
+            KB_INDEX = None
+    else:
+        print("[WARN] KB Index not found. Fallback to grep.", file=sys.stderr)
+    return KB_INDEX
+
+def get_query_embedding(query):
+    try:
+        if not ZHIPU_AVAILABLE:
+            return None
+        client = ZhipuAI(api_key=ZHIPU_API_KEY)
+        response = client.embeddings.create(
+            model="embedding-3", 
+            input=query
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"Error generating query embedding: {e}", file=sys.stderr)
+        return None
+
+def search_kb_hybrid(query, top_k=5):
+    """
+    Enhanced search using Hybrid Retrieval (BM25 + Semantic).
+    Returns a list of chunks.
+    """
+    index = load_index()
+    if not index:
+        return []
+
+    chunks = index["chunks"]
+    embeddings = index["embeddings"]
+    bm25 = index["bm25"]
+    
+    # 1. BM25 Search
+    tokenized_query = list(jieba.cut_for_search(query))
+    bm25_scores = bm25.get_scores(tokenized_query)
+    
+    # Normalize BM25 scores (0-1)
+    if bm25_scores.max() > 0:
+        bm25_scores = bm25_scores / bm25_scores.max()
+    
+    # 2. Semantic Search
+    query_embedding = get_query_embedding(query)
+    semantic_scores = np.zeros(len(chunks))
+    
+    if query_embedding:
+        # Cosine similarity
+        # Reshape query for sklearn
+        q_vec = np.array(query_embedding).reshape(1, -1)
+        # Ensure embeddings matrix is 2D
+        if len(embeddings.shape) == 1:
+             # Should not happen if build properly, but safety first
+             embeddings = embeddings.reshape(1, -1)
+             
+        # Check dimensions
+        if q_vec.shape[1] != embeddings.shape[1]:
+            # Dimension mismatch (e.g. index has 1024 but query is 2048)
+            # This happens if index was built with embedding-2 but we query with embedding-3
+            # Or vice versa.
+            # I used embedding-3 for both build and query, so it should be fine.
+            # But if index has 0-vectors (failed ones), they are 2048 dim now.
+            # If mismatch, we skip semantic part or pad/truncate?
+            # Let's just log and skip
+            print(f"[WARN] Embedding dimension mismatch: Query {q_vec.shape[1]}, Index {embeddings.shape[1]}", file=sys.stderr)
+        else:
+            sims = cosine_similarity(q_vec, embeddings)[0]
+            # Normalize semantic scores (already -1 to 1, map to 0-1)
+            semantic_scores = (sims + 1) / 2
+            
+    # 3. Combine Scores (Weighted)
+    # 0.3 BM25 + 0.7 Semantic is a common starting point
+    final_scores = 0.3 * bm25_scores + 0.7 * semantic_scores
+    
+    # Get top K indices
+    top_indices = np.argsort(final_scores)[::-1][:top_k]
+    
+    results = []
+    for idx in top_indices:
+        # Filter low score results?
+        if final_scores[idx] < 0.2: # Threshold
+             continue
+        results.append(chunks[idx])
+        
+    return results
+
+def format_chunks(chunks):
+    formatted = []
+    for chunk in chunks:
+        text = f"--- 来源：{chunk['filename']} {chunk['header']} ---\n{chunk['content']}\n"
+        formatted.append(text)
+    return "\n\n".join(formatted)
 
 def call_deepseek(messages, model=None, temperature=0.3, stream=False):
     """
@@ -441,17 +552,34 @@ def chat_with_model(query, image_path=None):
         # 0.1 Decide Model
         selected_model = decide_model(query)
         
-        # 1. Extract Keywords
-        keywords = extract_keywords(query)
-        # Debug info could be printed to stderr
-        # print(f"Keywords: {keywords}", file=sys.stderr)
+        # 1. Search KB (Hybrid or Grep)
+        index = load_index()
+        context_str = ""
         
-        # 2. Search KB
-        matches = search_kb(keywords)
-        # print(f"Matches found: {len(matches)}", file=sys.stderr)
-        
-        # 3. Get Context
-        context_str = get_context(matches)
+        if index:
+            print("[STATUS] Using Hybrid Search (BM25 + Semantic)", file=sys.stderr)
+            chunks = search_kb_hybrid(query, top_k=8)
+            if not chunks:
+                 print("[WARN] No relevant chunks found in index. Trying fallback.", file=sys.stderr)
+                 # Fallback to grep just in case
+                 keywords = extract_keywords(query)
+                 matches = search_kb(keywords)
+                 context_str = get_context(matches)
+            else:
+                 context_str = format_chunks(chunks)
+        else:
+            print("[STATUS] Using Legacy Grep Search", file=sys.stderr)
+            # 1. Extract Keywords
+            keywords = extract_keywords(query)
+            # Debug info could be printed to stderr
+            # print(f"Keywords: {keywords}", file=sys.stderr)
+            
+            # 2. Search KB
+            matches = search_kb(keywords)
+            # print(f"Matches found: {len(matches)}", file=sys.stderr)
+            
+            # 3. Get Context
+            context_str = get_context(matches)
         
         system_prompt = ""
         if context_str:

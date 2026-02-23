@@ -2,6 +2,8 @@
 
 This skill allows the agent to query the local Huidianbao Knowledge Base for precise answers about railway power supply safety regulations and operational procedures. It uses DeepSeek for reasoning/chat and Zhipu AI for image analysis.
 
+**NEW: Enhanced with Hybrid Search (BM25 + Semantic) for higher recall and precision.**
+
 ## When to use
 - Use this skill for ANY question related to:
   - Railway power supply safety (铁路电力安全)
@@ -14,6 +16,9 @@ This skill allows the agent to query the local Huidianbao Knowledge Base for pre
 
 ## Parameters
 - `query`: The user's question or search query. Can include `[FILE_PATH: /path/to/image]` for image analysis.
+
+## Maintenance
+- **Rebuild Index**: If knowledge base files change, run `python3 /root/.openclaw/build_kb_index.py` to update the search index.
 
 ## Returns
 - A markdown-formatted answer with citations from the Knowledge Base.
