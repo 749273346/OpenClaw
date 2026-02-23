@@ -1,6 +1,6 @@
-# Volcengine Knowledge Base Skill
+# HDB RAG Skill (DeepSeek/Zhipu Powered)
 
-This skill allows the agent to query the Volcengine Knowledge Base (powered by Doubao/Ark) for precise answers about railway power supply safety regulations and operational procedures.
+This skill allows the agent to query the local Huidianbao Knowledge Base for precise answers about railway power supply safety regulations and operational procedures. It uses DeepSeek for reasoning/chat and Zhipu AI for image analysis.
 
 ## When to use
 - Use this skill for ANY question related to:

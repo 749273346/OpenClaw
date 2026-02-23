@@ -31,7 +31,7 @@
             subgraph GatewayLayer ["接入层 (Node.js)"]
                 Monitor["Gateway: WeCom Monitor"]:::gatewayNode
                 Thinking["状态: 惠电宝正在思考..."]:::gatewayNode
-                PythonScript["ask_volcengine.py"]:::logicNode
+                PythonScript["ask_rag.py"]:::logicNode
             end
             
             subgraph CoreLogic ["核心逻辑层 (Python)"]
