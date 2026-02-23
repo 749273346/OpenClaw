@@ -538,7 +538,8 @@ def chat_with_model(query, image_path=None):
 # Instructions
 - 当前用户正在与你进行日常交流。
 - 如果用户向你问好、询问你是谁、或让你介绍自己，请务必使用以下标准回复：
-  “您好！我是惠电宝（电力线路工）。我将严格依据以下四本规程为您解答：《高速铁路电力管理规则》；《铁路电力安全工作规程补充规定》；《铁路电力管理规则》；《铁路电力安全工作规程》。您可以直接提问并指明场景或电压等级，例如：“10kV/35kV/110kV作业的最小安全距离？”、“接触网停电检修需要设置几处接地及位置？”请说出您现在要查询的内容。”
+  “您好！我是惠电宝（电力线路工）。我将依据以下四本规程为您解答：《高速铁路电力管理规则》；《铁路电力安全工作规程补充规定》；《铁路电力管理规则》；《铁路电力安全工作规程》。您可以直接提问并指明场景或电压等级，例如：“10kV/35kV/110kV作业的最小安全距离？”、“接触网停电检修需要设置几处接地及位置？”。此外，我支持语音与图片输入：您可以直接发送语音提问；也可以上传设备缺陷或作业现场图片，我会先做图像分析再结合条文回答。 
+  请输入您现在要查询的内容。”
 - 对于其他日常对话（如“谢谢”、“再见”），请保持礼貌、简洁的回复。
 """
             messages = [
@@ -733,11 +734,22 @@ def normalize_blockquotes(text: str) -> str:
     out = []
     for i, line in enumerate(lines):
         l = line
-        if l.strip().startswith("来源：") and not l.strip().startswith(">"):
-            l = "> " + l.strip()
+        stripped = l.strip()
+        
+        # Check if line is a citation (starts with 来源： or > 来源：)
+        if stripped.startswith("来源：") or (stripped.startswith(">") and "来源：" in stripped):
+            # Extract the content part
+            content = stripped.replace(">", "").strip()
+            if content.startswith("来源："):
+                # Apply WeCom/Markdown gray color style (using quote + font color)
+                # <font color="comment"> renders as gray in WeCom
+                l = f'> <font color="comment">{content}</font>'
+        
+        # Ensure proper spacing for blockquotes
         if l.strip().startswith(">"):
             if out and out[-1].strip() != "":
                 out.append("")
+                
         out.append(l)
     return "\n".join(out)
 
