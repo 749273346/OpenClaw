@@ -32,7 +32,7 @@ except ImportError:
 
 ZHIPU_API_KEY = "8160d175a76d4780bdd28cfa9a6324a2.PKy7AzPDMtROEBIV"
 
-def call_deepseek(messages, model=None, temperature=0.3):
+def call_deepseek(messages, model=None, temperature=0.3, stream=False):
     """
     Call DeepSeek API
     """
@@ -47,21 +47,37 @@ def call_deepseek(messages, model=None, temperature=0.3):
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "stream": False
+        "stream": stream
     }
     # print("[STATUS] Thinking...", file=sys.stderr)
     try:
         # Increased timeout for reasoning model
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=90, stream=stream)
         response.raise_for_status()
         
-        # Check for reasoning content if available (optional logging)
-        # result = response.json()
-        # reasoning = result['choices'][0]['message'].get('reasoning_content', '')
-        # if reasoning:
-        #     print(f"DEBUG Reasoning: {reasoning[:100]}...", file=sys.stderr)
-            
-        return response.json()['choices'][0]['message']['content']
+        if stream:
+            full_content = ""
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith('data: '):
+                        data_str = decoded_line[6:]
+                        if data_str == '[DONE]':
+                            break
+                        try:
+                            data_json = json.loads(data_str)
+                            delta = data_json['choices'][0]['delta']
+                            content_chunk = delta.get('content', '')
+                            # reasoning_chunk = delta.get('reasoning_content', '') # DeepSeek Reasoner
+                            
+                            if content_chunk:
+                                print(f"[STREAM] {json.dumps(content_chunk)}", flush=True)
+                                full_content += content_chunk
+                        except json.JSONDecodeError:
+                            continue
+            return full_content
+        else:
+            return response.json()['choices'][0]['message']['content']
     except Exception as e:
         print(f"Deepseek API Error: {e}", file=sys.stderr)
         return None
@@ -505,7 +521,7 @@ def chat_with_model(query, image_path=None):
             {"role": "user", "content": query}
         ]
         
-        response = call_deepseek(messages, model=selected_model) # Use selected model
+        response = call_deepseek(messages, model=selected_model, stream=True) # Use selected model with streaming
         return response
 
     except Exception as e:
