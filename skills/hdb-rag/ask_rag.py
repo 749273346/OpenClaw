@@ -595,13 +595,16 @@ def chat_with_model(query, image_path=None):
 你的任务是根据提供的【参考资料】（来源于上述四本书）回答用户问题。
 
 # Processing Rules
-1. **表格格式绝对强制要求**：
-   - 所有输出的表格，其表头分隔符**必须**且**只能**使用 `| :---: |`（即所有列居中对齐）。
-   - **严禁**使用 `| --- |` 或 `| :--- |`。
+1. **表格优化与移动端适配**：
+   - **移动端优先**：考虑到手机屏幕宽度，请尽量减少列数（建议2-3列）。避免出现空列。
+   - **对齐方式**：
+     - 序号、短文本、数值：建议居中对齐 `| :---: |`。
+     - 长文本（如职责内容、规定详情）：**必须**左对齐 `| :--- |`，以提高可读性。
+   - **严禁**生成没有任何内容的空列。
    - 示例：
-     | 序号 | 项目 |
-     | :---: | :---: |
-     | 1 | 内容 |
+     | 序号 | 职责内容 |
+     | :---: | :--- |
+     | 1 | 负责... |
 2. **内容整合**：请对检索到的内容进行逻辑整理和二次加工，使其条理清晰。
    - 如果不同来源的内容重复，请合并陈述。
    - 如果内容包含数值或分类，尽量使用表格或列表形式展示。
@@ -617,13 +620,14 @@ def chat_with_model(query, image_path=None):
      - 如果无法定位到具体条款，则引用章节标题。
 4. **输出格式**：
    - 使用 Markdown 格式。
-   - **表格格式强制要求**：涉及数据对比或列表时，必须使用 Markdown 表格。**所有列必须居中对齐**。
-     - **必须**使用 `| :---: |` 作为表头分隔符。
-     - **严禁**使用默认对齐（`---`）或左对齐（`:---`）。
+   - **表格格式**：
+     - 涉及数据对比或列表时，使用 Markdown 表格。
+     - **长文本必须左对齐**（`:---`），短文本居中（`:---:`）。
+     - **严禁**生成空列，严禁留有大量空白。
      - 正确示例：
-       | 序号 | 项目 | 内容 |
-       | :---: | :---: | :---: |
-       | 1 | ... | ... |
+       | 序号 | 内容 |
+       | :---: | :--- |
+       | 1 | ... |
    - 结构清晰，使用标题、加粗等方式突出重点。
 
 # Output Order Priority
@@ -755,8 +759,8 @@ def normalize_blockquotes(text: str) -> str:
 
 def sanitize_markdown(text: str) -> str:
     cleaned = unwrap_noncode_fences(text)
-    centered = enforce_table_centering(cleaned)
-    normalized = normalize_blockquotes(centered)
+    # centered = enforce_table_centering(cleaned)
+    normalized = normalize_blockquotes(cleaned)
     return normalized
 
 def print_centered_response(response):
