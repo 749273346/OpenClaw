@@ -757,11 +757,161 @@ def normalize_blockquotes(text: str) -> str:
         out.append(l)
     return "\n".join(out)
 
+def process_single_table(lines: list[str]) -> str:
+    """
+    Cleans up a single markdown table:
+    1. Removes empty columns.
+    2. Enforces left alignment for columns with long text.
+    """
+    if not lines:
+        return ""
+        
+    # Parse table
+    # Assume lines are raw strings with pipes
+    rows = []
+    for line in lines:
+        # Split by pipe, but be careful about escaped pipes (simplified for now)
+        parts = [p.strip() for p in line.strip().split('|')]
+        # Standard markdown table starts and ends with |, so first and last parts are usually empty
+        if parts and parts[0] == '':
+            parts.pop(0)
+        if parts and parts[-1] == '':
+            parts.pop(-1)
+        rows.append(parts)
+        
+    if len(rows) < 2:
+        return "\n".join(lines)
+        
+    # Check headers (row 0)
+    headers = rows[0]
+    num_cols = len(headers)
+    
+    # Identify empty columns
+    # A column is empty if header is empty AND all content cells are empty
+    cols_to_keep = []
+    for col_idx in range(num_cols):
+        is_empty = True
+        # Check header
+        if headers[col_idx] != "":
+            is_empty = False
+        else:
+            # Check all rows
+            for r_i, row in enumerate(rows):
+                if r_i == 0: continue # Skip header
+                
+                # Check if it is a separator row (contains only -, :)
+                if r_i == 1:
+                    # Heuristic: if row content looks like separator
+                    cell = row[col_idx] if col_idx < len(row) else ""
+                    if all(c in '-: ' for c in cell):
+                         continue
+                
+                if col_idx < len(row) and row[col_idx] != "":
+                    is_empty = False
+                    break
+        
+        if not is_empty:
+            cols_to_keep.append(col_idx)
+            
+    # If no columns to keep (all empty?), return original
+    if not cols_to_keep:
+        return "\n".join(lines)
+        
+    # Reconstruct table with kept columns
+    new_rows = []
+    for row_idx, row in enumerate(rows):
+        new_row = []
+        for col_idx in cols_to_keep:
+            if col_idx < len(row):
+                new_row.append(row[col_idx])
+            else:
+                new_row.append("")
+        new_rows.append(new_row)
+        
+    # Analyze alignment (Row 1 is separator)
+    if len(new_rows) > 1:
+        separator_row = new_rows[1]
+        # Check content length for each column to determine alignment
+        col_alignments = []
+        for col_idx in range(len(new_rows[0])):
+            # Check avg length of content (skip header and separator)
+            total_len = 0
+            count = 0
+            for row in new_rows[2:]:
+                if col_idx < len(row):
+                    total_len += len(row[col_idx])
+                    count += 1
+            
+            avg_len = total_len / count if count > 0 else 0
+            
+            # If avg length > 10, force left align
+            if avg_len > 10:
+                col_alignments.append(":---")
+            else:
+                # Keep existing or default to center
+                # Check separator
+                if col_idx < len(separator_row):
+                    sep = separator_row[col_idx]
+                    if sep.startswith(':') and not sep.endswith(':'):
+                        col_alignments.append(":---")
+                    elif sep.startswith(':') and sep.endswith(':'):
+                        col_alignments.append(":---:")
+                    elif sep.endswith(':'):
+                        col_alignments.append("---:")
+                    else:
+                        col_alignments.append(":---:") # Default to center
+                else:
+                    col_alignments.append(":---:")
+    
+        # Apply alignments to separator row
+        new_rows[1] = col_alignments
+    
+    # Format back to string
+    final_lines = []
+    for row in new_rows:
+        line = "| " + " | ".join(row) + " |"
+        final_lines.append(line)
+        
+    return "\n".join(final_lines)
+
+def optimize_tables(text: str) -> str:
+    lines = text.split('\n')
+    out = []
+    in_table = False
+    table_lines = []
+    
+    # Regex to identify table line (must start with |)
+    # But be careful about code blocks (already unwrapped?)
+    
+    for line in lines:
+        stripped = line.strip()
+        # Basic check: starts with pipe
+        if stripped.startswith('|'):
+             # Also check if it looks like a table row (has internal pipes or just structure)
+             if stripped.count('|') >= 1:
+                 in_table = True
+                 table_lines.append(line)
+                 continue
+        
+        if in_table:
+            # End of table
+            out.append(process_single_table(table_lines))
+            table_lines = []
+            in_table = False
+            
+        out.append(line)
+        
+    if in_table:
+        out.append(process_single_table(table_lines))
+        
+    return '\n'.join(out)
+
 def sanitize_markdown(text: str) -> str:
     cleaned = unwrap_noncode_fences(text)
     # centered = enforce_table_centering(cleaned)
     normalized = normalize_blockquotes(cleaned)
-    return normalized
+    optimized = optimize_tables(normalized)
+    return optimized
 
 def print_centered_response(response):
     if not response:
