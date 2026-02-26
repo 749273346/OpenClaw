@@ -1,0 +1,127 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.9",
+    "lastTouchedAt": "2026-02-22T06:03:52.212Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-11T09:47:49.711Z",
+    "lastRunVersion": "2026.2.9",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/root/.openclaw/workspace",
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      },
+      "model": {
+        "primary": "deepseek/deepseek-chat"
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "lan",
+    "controlUi": {
+      "allowInsecureAuth": false
+    },
+    "auth": {
+      "mode": "token",
+      "token": "eff9f865906edf71bf3e63335ae4ad3a4feb6c6e952be44a"
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    }
+  },
+  "skills": {
+    "install": {
+      "nodeManager": "npm"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "feishu": {
+        "enabled": true
+      },
+      "wecom": {
+        "enabled": true
+      }
+    },
+    "installs": {
+      "wecom": {
+        "source": "npm",
+        "spec": "git+https://cnb.cool/lighthouse/lighthousebackend/openclaw-wecom.git",
+        "installPath": "/root/.openclaw/extensions/wecom",
+        "version": "2026.2.5",
+        "installedAt": "2026-02-11T09:49:25.555Z"
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": "sk-1df962f894304bb38233be38c9c82d6b",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "deepseek-chat",
+            "name": "DeepSeek Chat"
+          },
+          {
+            "id": "deepseek-reasoner",
+            "name": "DeepSeek Reasoner"
+          }
+        ]
+      }
+    },
+    "mode": "merge"
+  },
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "agent": {
+        "corpId": "ww7c9ed446233cb1dd",
+        "corpSecret": "Iu5ABWfArAAHfJ4g3GNoLFkKbHYlWXL0cpW97HcgSz8",
+        "agentId": "1000004",
+        "token": "T0iVs8zr5Sk0oea",
+        "encodingAESKey": "yLHW5lxaV9FRfNyW9OTp95wV1uQ2gmbDpNDcM3pmVFL",
+        "welcomeText": "你好！我是 AI 助手",
+        "dm": {
+          "policy": "open"
+        }
+      },
+      "bot": {
+        "id": "aibMVZPv28cT4wmzwWR4Y_V_IxIHG_-SKFp",
+        "token": "Xq7i5pDOCynsptdVMEawJ",
+        "encodingAESKey": "usDo1xakF5upRTp42OUpFltBA7qf6nWIOQdAMPcqDFq",
+        "streamPlaceholderContent": "惠电宝正在思考...",
+        "welcomeText": "你好！我是惠电宝，您的电力线路工专属知识库助手。请直接问我相关问题！",
+        "dm": {
+          "policy": "open"
+        }
+      }
+    },
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_a9134de0b9f8dcd4",
+      "appSecret": "qeXzLNZFWnuoUEuuyWzQUfwdszLZvSK2",
+      "domain": "feishu",
+      "groupPolicy": "open"
+    }
+  }
+}
